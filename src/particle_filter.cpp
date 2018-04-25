@@ -33,7 +33,8 @@ void ParticleFilter::AddGaussianNoiseToParticles(double std[])
     normal_distribution<double> noise_theta(0.0, std_theta);
 
     // Add random Gaussian noise to each particle.
-    default_random_engine gen;
+    std::random_device rd;
+    std::mt19937 gen(rd());
 
     for (int i=0; i < num_particles; i++) {
         particles[i].x += noise_x(gen);
@@ -97,22 +98,10 @@ void ParticleFilter::prediction(
     AddGaussianNoiseToParticles(std_pos);
 }
 
-// void ParticleFilter::dataAssociation(
-//     std::vector<LandmarkObs> predicted, 
-//     std::vector<LandmarkObs>& observations) 
-// {
-//     // Find the predicted measurement that is closest to each observed measurement 
-//     // and assign the observed measurement to this particular landmark.
-//     // NOTE: this method will NOT be called by the grading code. But you will 
-//     // probably find it useful to implement this method and use it as a helper 
-//     // during the updateWeights phase.
-
-// }
-
 void ParticleFilter::updateWeights(
     double sensor_range, 
     double std_landmark[], 
-    const vector<LandmarkObs> &obs_car, 
+    const vector<LandmarkObs> &observations, 
     const Map &the_map) 
 {
 	// Update the weights of each particle using a mult-variate Gaussian distribution. 
@@ -130,6 +119,7 @@ void ParticleFilter::updateWeights(
     // equation 3.33:
 	//   http://planning.cs.uiuc.edu/node99.html
 
+    // create fast ID->landmark lookup to avoid linear search later
     unordered_map<int, Map::single_landmark_s> LM_lookup;
 
     for (Map::single_landmark_s LM in the_map.landmark_list)
@@ -137,75 +127,90 @@ void ParticleFilter::updateWeights(
         LM_lookup[LM.id_i] = LM;
     }
 
+    // pre-compute parameters for multi-variate Gaussian
     double std_x = std_landmark[0];
     double std_y = std_landmark[1];
     double var_x = std_x*std_x;
     double var_y = std_y*std_y;
-    double gauss_norm = 1.0 / (2*M_PI*std_x*std_y);
+    double gauss_norm = (2*M_PI*std_x*std_y);
 
-    for (size_t i=0; i < particles.size(); i++) 
+    // update each particle weight
+    for (Particle &part: particles)
     {
-        // extract parameters for car-to-map transform
-        double xp = particles[i].x;
-        double yp = particles[i].y;
-        double cos_hp = cos(particles[i].theta);
-        double sin_hp = sin(particles[i].theta);
+        // find landmarks within sensor range of this particle
+        vector<LandmarkObs> pred_landmarks;
 
-        // compute map-relative landmark observations
-        size_t obs_count = obs_car.size();
-        vector<LandmarkObs> obs_map(obs_count);
-
-        for (size_t j=0; j < obs_count; j++)
+        for (Map::single_landmark_s LM: the_map.landmark_list)
         {
-            double xc = obs_car[j].x;
-            double yc = obs_car[j].y;
-
-            obs_map[j].x = xc*cos_hp - yc*sin_hp + xp;
-            obs_map[j].y = xc*sin_hp + yc*cos_hp + yp;
+            if (dist(part.x, part.y, LM.x_f, LM.y_f) <= sensor_range)
+            {
+                LandmarkObs pred;
+                pred.id = LM.id_i;
+                pred.x = LM.x_f;
+                pred.y = LM.y_f;
+                pred_landmarks.push_back(pred);
+            }
         }
 
-        // associate each observation with nearest map landmark
-        for (size_t j=0; j < obs_count; j++)
+        if (pred_landmarks.empty())
         {
-            double dist_nn = sensor_range;
-            int id_nn = -1;
+            part.weight = 0.0;
+            continue;
+        }
 
-            for (size_t k=0; k < the_map.landmark_list.size(); k++)
+        // compute map-relative sensor observations
+        vector<LandmarkObs> meas_observations(observations);
+        double cos_h = cos(part.theta);
+        double sin_h = sin(part.theta);
+
+        for (LandmarkObs &obs: meas_observations)
+        {
+            // start with car-relative coordinates
+            double xc = obs.x;
+            double yc = obs.y;
+
+            // transform into map-relative coordinates
+            obs.x = xc*cos_h - yc*sin_h + part.x;
+            obs.y = xc*sin_h + yc*cos_h + part.x;
+        }
+
+        // associate each sensor observation with nearest landmark
+        for (LandmarkObs &obs: meas_observations)
+        {
+            double dist_nn = sensor_range*10;
+
+            for (const LandmarkObs &LM: pred_landmarks)
             {
-                double x_obs = obs_map[j].x;
-                double y_obs = obs_map[j].y;
-                double x_LM = the_map.landmark_list[k].x_f;
-                double y_LM = the_map.landmark_list[k].y_f;
-                double dist_LM = dist(x_obs, y_obs, x_LM, y_LM);
+                double dist_LM = dist(obs.x, obs.y, LM.x, LM.y);
                 
                 if (dist_LM < dist_nn) 
                 {
                     dist_nn = dist_LM;
-                    id_nn = the_map.landmark_list[k].id_i;
+                    obs.id = LM.id;
                 }
             }
-
-            obs_map[j].id = id_nn;
         }
 
         // particle weight = joint probability of observations
-        particles[i].weight = 1.0;
+        part.weight = 1.0;
 
-        for (size_t j=0; j < obs_count; j++)
+        for (const LandmarkObs &obs: meas_observations)
         {
-            double dx = sensor_range;
-            double dy = sensor_range;
-
-            if (obs_map[j].id >= 0)
-            {
-                Map::single_landmark_s LM = LM_lookup[obs_map[j].id];
-                dx = obs_map[j].x - LM.x_f;
-                dy = obs_map[j].y - LM.y_f;
-            }
-
+            Map::single_landmark_s LM = LM_lookup[obs.id];
+            double dx = obs.x - LM.x_f;
+            double dy = obs.y - LM.y_f;
             double exponent = 0.5*dx*dx/var_x + 0.5*dy*dy/var_y;
-            particles[i].weight *= exp(-exponent) * gauss_norm;
+            part.weight *= exp(-exponent) / gauss_norm;
         }
+    }
+
+    // normalize particle weights
+    double sum_weights = 0.0;
+    for (const Particle &part: particles) {
+        sum_weights += particles[i].weight;
+    }
+    for (Particle &part: particles) {
+        part.weight /= sum_weights;
     }
 }
 
@@ -223,7 +228,8 @@ void ParticleFilter::resample()
     }
 
     discrete_distribution<unsigned int> draw_next(weights.begin(), weights.end());
-    default_random_engine gen;
+    std::random_device rd;
+    std::mt19937 gen(rd());
 
     // re-sample particles based on weighted distribution
     vector<Particle> resampled_particles(num_particles);
@@ -232,6 +238,7 @@ void ParticleFilter::resample()
         resampled_particles[i] = particles[draw_next(gen)];
     }
 
+    // replace particles with re-sampled set
     particles = resampled_particles;
 }
 
