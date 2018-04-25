@@ -97,17 +97,17 @@ void ParticleFilter::prediction(
     AddGaussianNoiseToParticles(std_pos);
 }
 
-void ParticleFilter::dataAssociation(
-    std::vector<LandmarkObs> predicted, 
-    std::vector<LandmarkObs>& observations) 
-{
-    // Find the predicted measurement that is closest to each observed measurement 
-    // and assign the observed measurement to this particular landmark.
-    // NOTE: this method will NOT be called by the grading code. But you will 
-    // probably find it useful to implement this method and use it as a helper 
-    // during the updateWeights phase.
+// void ParticleFilter::dataAssociation(
+//     std::vector<LandmarkObs> predicted, 
+//     std::vector<LandmarkObs>& observations) 
+// {
+//     // Find the predicted measurement that is closest to each observed measurement 
+//     // and assign the observed measurement to this particular landmark.
+//     // NOTE: this method will NOT be called by the grading code. But you will 
+//     // probably find it useful to implement this method and use it as a helper 
+//     // during the updateWeights phase.
 
-}
+// }
 
 void ParticleFilter::updateWeights(
     double sensor_range, 
@@ -211,10 +211,28 @@ void ParticleFilter::updateWeights(
 
 void ParticleFilter::resample() 
 {
-	// TODO: Resample particles with replacement with probability proportional to their weight. 
+	// Resample particles with replacement with probability proportional to their weight. 
 	// NOTE: You may find std::discrete_distribution helpful here.
 	//   http://en.cppreference.com/w/cpp/numeric/random/discrete_distribution
 
+    // build discrete weighted distribution out of current particle weights
+    vector<double> weights(num_particles);
+
+    for (size_t i=0; i < num_particles; i++) {
+        weights[i] = particles[i].weight;
+    }
+
+    discrete_distribution<unsigned int> draw_next(weights.begin(), weights.end());
+    default_random_engine gen;
+
+    // re-sample particles based on weighted distribution
+    vector<Particle> resampled_particles(num_particles);
+
+    for (int i=0; i < num_particles; i++) {
+        resampled_particles[i] = particles[draw_next(gen)];
+    }
+
+    particles = resampled_particles;
 }
 
 Particle ParticleFilter::SetAssociations(
