@@ -14,6 +14,7 @@
 #include <sstream>
 #include <string>
 #include <iterator>
+#include <unordered_map>
 
 #include "particle_filter.h"
 
@@ -100,29 +101,112 @@ void ParticleFilter::dataAssociation(
     std::vector<LandmarkObs> predicted, 
     std::vector<LandmarkObs>& observations) 
 {
-	// TODO: Find the predicted measurement that is closest to each observed measurement and assign the 
-	//   observed measurement to this particular landmark.
-	// NOTE: this method will NOT be called by the grading code. But you will probably find it useful to 
-	//   implement this method and use it as a helper during the updateWeights phase.
+    // Find the predicted measurement that is closest to each observed measurement 
+    // and assign the observed measurement to this particular landmark.
+    // NOTE: this method will NOT be called by the grading code. But you will 
+    // probably find it useful to implement this method and use it as a helper 
+    // during the updateWeights phase.
 
 }
 
 void ParticleFilter::updateWeights(
     double sensor_range, 
     double std_landmark[], 
-    const std::vector<LandmarkObs> &observations, 
-    const Map &map_landmarks) 
+    const vector<LandmarkObs> &obs_car, 
+    const Map &the_map) 
 {
-	// TODO: Update the weights of each particle using a mult-variate Gaussian distribution. You can read
-	//   more about this distribution here: https://en.wikipedia.org/wiki/Multivariate_normal_distribution
-	// NOTE: The observations are given in the VEHICLE'S coordinate system. Your particles are located
-	//   according to the MAP'S coordinate system. You will need to transform between the two systems.
-	//   Keep in mind that this transformation requires both rotation AND translation (but no scaling).
-	//   The following is a good resource for the theory:
+	// Update the weights of each particle using a mult-variate Gaussian distribution. 
+    // You can read more about this distribution here: 
+    //   https://en.wikipedia.org/wiki/Multivariate_normal_distribution
+
+	// NOTE: The observations are given in the VEHICLE'S coordinate system. Your particles 
+    // are located according to the MAP'S coordinate system. You will need to transform 
+    // between the two systems.
+
+	// Keep in mind that this transformation requires both rotation AND translation (but 
+    // no scaling). The following is a good resource for the theory:
 	//   https://www.willamette.edu/~gorr/classes/GeneralGraphics/Transforms/transforms2d.htm
-	//   and the following is a good resource for the actual equation to implement (look at equation 
-	//   3.33
+	// And the following is a good resource for the actual equation to implement (look at 
+    // equation 3.33:
 	//   http://planning.cs.uiuc.edu/node99.html
+
+    unordered_map<int, Map::single_landmark_s> LM_lookup;
+
+    for (Map::single_landmark_s LM in the_map.landmark_list)
+    {
+        LM_lookup[LM.id_i] = LM;
+    }
+
+    double std_x = std_landmark[0];
+    double std_y = std_landmark[1];
+    double var_x = std_x*std_x;
+    double var_y = std_y*std_y;
+    double gauss_norm = 1.0 / (2*M_PI*std_x*std_y);
+
+    for (size_t i=0; i < particles.size(); i++) 
+    {
+        // extract parameters for car-to-map transform
+        double xp = particles[i].x;
+        double yp = particles[i].y;
+        double cos_hp = cos(particles[i].theta);
+        double sin_hp = sin(particles[i].theta);
+
+        // compute map-relative landmark observations
+        size_t obs_count = obs_car.size();
+        vector<LandmarkObs> obs_map(obs_count);
+
+        for (size_t j=0; j < obs_count; j++)
+        {
+            double xc = obs_car[j].x;
+            double yc = obs_car[j].y;
+
+            obs_map[j].x = xc*cos_hp - yc*sin_hp + xp;
+            obs_map[j].y = xc*sin_hp + yc*cos_hp + yp;
+        }
+
+        // associate each observation with nearest map landmark
+        for (size_t j=0; j < obs_count; j++)
+        {
+            double dist_nn = sensor_range;
+            int id_nn = -1;
+
+            for (size_t k=0; k < the_map.landmark_list.size(); k++)
+            {
+                double x_obs = obs_map[j].x;
+                double y_obs = obs_map[j].y;
+                double x_LM = the_map.landmark_list[k].x_f;
+                double y_LM = the_map.landmark_list[k].y_f;
+                double dist_LM = dist(x_obs, y_obs, x_LM, y_LM);
+                
+                if (dist_LM < dist_nn) 
+                {
+                    dist_nn = dist_LM;
+                    id_nn = the_map.landmark_list[k].id_i;
+                }
+            }
+
+            obs_map[j].id = id_nn;
+        }
+
+        // particle weight = joint probability of observations
+        particles[i].weight = 1.0;
+
+        for (size_t j=0; j < obs_count; j++)
+        {
+            double dx = sensor_range;
+            double dy = sensor_range;
+
+            if (obs_map[j].id >= 0)
+            {
+                Map::single_landmark_s LM = LM_lookup[obs_map[j].id];
+                dx = obs_map[j].x - LM.x_f;
+                dy = obs_map[j].y - LM.y_f;
+            }
+
+            double exponent = 0.5*dx*dx/var_x + 0.5*dy*dy/var_y;
+            particles[i].weight *= exp(-exponent) * gauss_norm;
+        }
+    }
 }
 
 void ParticleFilter::resample() 
