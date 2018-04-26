@@ -127,11 +127,6 @@ void ParticleFilter::updateWeights(
                 pred.y = LM.y_f;
                 pred_landmarks.push_back(pred);
             }
-            // LandmarkObs pred;
-            // pred.id = LM.id_i;
-            // pred.x = LM.x_f;
-            // pred.y = LM.y_f;
-            // pred_landmarks.push_back(pred);
         }
 
         if (pred_landmarks.empty())
@@ -199,9 +194,11 @@ void ParticleFilter::updateWeights(
 
     // normalize particle weights
     double sum_weights = 0.0;
+
     for (const Particle &part: particles) {
         sum_weights += part.weight;
     }
+        
     for (Particle &part: particles) {
         part.weight /= sum_weights;
     }
@@ -232,7 +229,7 @@ void ParticleFilter::resample()
     }
 
     // replace particles with re-sampled set
-    particles = resampled_particles;
+    particles.swap(resampled_particles);
 }
 
 void ParticleFilter::AddGaussianNoiseToParticles(double std[])
@@ -251,10 +248,10 @@ void ParticleFilter::AddGaussianNoiseToParticles(double std[])
     std::random_device rd;
     std::mt19937 gen(rd());
 
-    for (int i=0; i < num_particles; i++) {
-        particles[i].x += noise_x(gen);
-        particles[i].y += noise_y(gen);
-        particles[i].theta += noise_theta(gen);
+    for (Particle &part: particles) {
+        part.x += noise_x(gen);
+        part.y += noise_y(gen);
+        part.theta += noise_theta(gen);
     }
 }
 
